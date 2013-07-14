@@ -21,11 +21,15 @@ References:
    - https://developer.mozilla.org/en-US/docs/JSON#JSON_in_Firefox_2
 */
 
+var util = require('util');
+var rest = require('restler');
 var fs = require('fs');
 var program = require('commander');
 var cheerio = require('cheerio');
 var HTMLFILE_DEFAULT = "index.html";
 var CHECKSFILE_DEFAULT = "checks.json";
+var HTMLURL_DEFAULT = "http://protected-ravine-7318.herokuapp.com/";
+var checkJson = '';
 
 var assertFileExists = function(infile) {
     var instr = infile.toString();
@@ -36,12 +40,10 @@ var assertFileExists = function(infile) {
     return instr;
 };
 
-var cheerioHtmlFile = function(htmlfile) {
-    return cheerio.load(fs.readFileSync(htmlfile));
-};
-
-var loadChecks = function(checksfile) {
-    return JSON.parse(fs.readFileSync(checksfile));
+var clone = function(fn) {
+    // Workaround for commander.js issue.
+    // http://stackoverflow.com/a/6772648
+    return fn.bind({});
 };
 
 var checkHtmlFile = function(htmlfile, checksfile) {
@@ -52,23 +54,54 @@ var checkHtmlFile = function(htmlfile, checksfile) {
         var present = $(checks[ii]).length > 0;
         out[checks[ii]] = present;
     }
-    return out;
+    checkJson =  out;
 };
 
-var clone = function(fn) {
-    // Workaround for commander.js issue.
-    // http://stackoverflow.com/a/6772648
-    return fn.bind({});
+
+var passCheckFile = function(checksfile) {
+    var checkHtmlUrl = function(result, response) {
+        if (result instanceof Error) {
+            console.error('Error: ' + util.format(response.message));
+	    process.exit(1);
+        } else {
+	    $ = cheerio.load(result);
+        }
+        var checks = loadChecks(checksfile).sort();
+        var out = {};
+        for(var ii in checks) {
+	    var present = $(checks[ii]).length > 0;
+	    out[checks[ii]] = present;
+        }
+		var outJson = JSON.stringify(out, null, 4);
+		console.log(outJson);
+    };
+    return checkHtmlUrl;
+};
+
+var cheerioHtmlFile = function(htmlfile) {
+    return cheerio.load(fs.readFileSync(htmlfile));
+};
+
+var loadChecks = function(checksfile) {
+    return JSON.parse(fs.readFileSync(checksfile));
 };
 
 if(require.main == module) {
     program
+        .option('-f, --file <html_file>', 'Path to index.html')
+        .option('-u, --url <url_link>', 'url to index.html')
         .option('-c, --checks <check_file>', 'Path to checks.json', clone(assertFileExists), CHECKSFILE_DEFAULT)
-        .option('-f, --file <html_file>', 'Path to index.html', clone(assertFileExists), HTMLFILE_DEFAULT)
         .parse(process.argv);
-    var checkJson = checkHtmlFile(program.file, program.checks);
-    var outJson = JSON.stringify(checkJson, null, 4);
-    console.log(outJson);
-} else {
-    exports.checkHtmlFile = checkHtmlFile;
+	if (typeof(program.file) != 'undefined' && typeof(program.url) == 'undefined'){  //File as the input
+		checkHtmlFile(program.file, program.checks);
+		var outJson = JSON.stringify(checkJson, null, 4);
+		console.log(outJson);
+	} else if (typeof(program.file) == 'undefined' && typeof(program.url) != 'undefined'){
+		var checkHtmlUrl = passCheckFile(program.checks);
+	    rest.get(program.url).on('complete', checkHtmlUrl);
+	} else {
+		checkHtmlFile(HTMLFILE_DEFAULT, program.checks);
+		var outJson = JSON.stringify(checkJson, null, 4);
+		console.log(outJson);
+	}
 }
